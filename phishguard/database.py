@@ -16,8 +16,14 @@ import sqlite3
 from datetime import datetime, timezone
 
 DB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "instance")
-# Allow the storage location to be overridden (deployment / isolated tests).
-DB_PATH = os.environ.get("PHISHGUARD_DB") or os.path.join(DB_DIR, "phishguard.db")
+# On Vercel the deployment filesystem is read-only; only /tmp is writable.
+# The PHISHGUARD_DB env var overrides this for any deployment target.
+if os.environ.get("PHISHGUARD_DB"):
+    DB_PATH = os.environ["PHISHGUARD_DB"]
+elif os.environ.get("VERCEL"):
+    DB_PATH = "/tmp/phishguard.db"
+else:
+    DB_PATH = os.path.join(DB_DIR, "phishguard.db")
 
 
 def _now() -> str:
@@ -196,23 +202,29 @@ class Database:
     # Statistics
     # ------------------------------------------------------------------ #
     def statistics(self) -> dict:
+        # Counts are banded by confidence to match the UI's three-tier verdict:
+        #   high (>=0.65) phishing · medium (0.45-0.65) suspicious · low legitimate
         with self._conn() as c:
             total = c.execute(
                 "SELECT COUNT(*) AS n FROM phishing_reports").fetchone()["n"]
             phishing = c.execute(
                 "SELECT COUNT(*) AS n FROM phishing_reports "
-                "WHERE classification='phishing'").fetchone()["n"]
+                "WHERE confidence_score >= 0.65").fetchone()["n"]
+            suspicious = c.execute(
+                "SELECT COUNT(*) AS n FROM phishing_reports "
+                "WHERE confidence_score >= 0.45 AND confidence_score < 0.65").fetchone()["n"]
             correct = c.execute(
                 "SELECT COUNT(*) AS n FROM phishing_reports "
                 "WHERE user_feedback='correct'").fetchone()["n"]
             graded = c.execute(
                 "SELECT COUNT(*) AS n FROM phishing_reports "
                 "WHERE user_feedback IS NOT NULL").fetchone()["n"]
-        legitimate = total - phishing
+        legitimate = total - phishing - suspicious
         accuracy = (correct / graded * 100) if graded else 0.0
         return {
             "total_analyzed": total,
             "phishing_detected": phishing,
+            "suspicious_detected": suspicious,
             "legitimate": legitimate,
             "feedback_accuracy": round(accuracy, 2),
             "phishing_percentage": round((phishing / total * 100) if total else 0, 2),

@@ -100,13 +100,29 @@ class PhishingDetector:
         confidence = float(min(max(confidence, 0.0), 1.0))
         classification = "phishing" if confidence >= 0.5 else "legitimate"
 
+        reasons = self._reasons(feats)
+        sender_issues = self.analyze_sender(email.get("sender", ""))
+
+        # Keep the explanation consistent with the verdict. A borderline ML
+        # call can cross the 0.5 line on a combination of weak signals without
+        # any single hard rule firing - surface the softer signals (and say so)
+        # instead of showing an empty/"nothing found" panel under a PHISHING tag.
+        if classification == "phishing" and not reasons:
+            reasons = self._soft_signals(feats)
+            if confidence < 0.65:
+                reasons.insert(0, "Borderline: the model leaned phishing on the "
+                                  "overall pattern rather than one strong signal")
+            if not reasons:
+                reasons = ["Flagged by the ML model on the combined pattern of "
+                           "the message; no single strong signal"]
+
         return {
             "classification": classification,
             "confidence_score": confidence,
             "engine": engine,
             "features": feats,
-            "reasons": self._reasons(feats),
-            "sender_issues": self.analyze_sender(email.get("sender", "")),
+            "reasons": reasons,
+            "sender_issues": sender_issues,
         }
 
     def _predict_ml(self, vector) -> float:
@@ -161,6 +177,29 @@ class PhishingDetector:
                          "suspicious_sender_format") and val:
                 reasons.append(text)
         return reasons
+
+    @staticmethod
+    def _soft_signals(feats: dict) -> list[str]:
+        """Weaker, single-occurrence tells used to explain borderline calls
+        where no strong rule fired but the model still leaned phishing."""
+        out = []
+        if feats.get("num_suspicious_keywords", 0) >= 1:
+            out.append("Contains phishing-adjacent wording")
+        if feats.get("money_term_count", 0) >= 1:
+            out.append("Mentions money, prizes or rewards")
+        if feats.get("credential_term_count", 0) >= 1:
+            out.append("References accounts or credentials")
+        if feats.get("has_urgent_language"):
+            out.append("Message pressures you to act")
+        if feats.get("num_urls", 0) >= 1 and not feats.get("has_https"):
+            out.append("Links use plain http instead of https")
+        if feats.get("max_url_length", 0) >= 90:
+            out.append("Contains an unusually long link")
+        if feats.get("sender_is_freemail"):
+            out.append("Sent from a free email service")
+        if feats.get("subject_is_urgent"):
+            out.append("Subject line uses urgency")
+        return out
 
     @staticmethod
     def analyze_sender(sender: str) -> list[str]:

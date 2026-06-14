@@ -1,4 +1,4 @@
-# PhishGuard AI
+#  PhishGuard AI
 
 **An AI/ML-based phishing-detection system** that analyses an email's text,
 sender and URLs and returns a calibrated risk verdict in real time — served
@@ -236,6 +236,35 @@ python -c "import sys; sys.path.insert(0,'tests'); \
 from eval_set import EVAL; from phishguard.detector import PhishingDetector; \
 d=PhishingDetector(); ok=sum((d.predict(e)['classification']=='phishing')==bool(y) for e,y in EVAL); \
 print(f'{ok}/{len(EVAL)} correct')"
+```
+
+---
+
+## Deploy to Vercel
+
+PhishGuard AI can be deployed as a serverless Flask app on Vercel in a few steps.
+
+> **Note on persistence:** Vercel's serverless filesystem is ephemeral — scan history and alerts reset on cold starts. The ML analysis engine works fully; only the SQLite history doesn't persist. For permanent history, set the `PHISHGUARD_DB` environment variable to a writable path or swap the database layer for a hosted service (e.g. Vercel Postgres).
+
+### 1. Push to GitHub
+
+Make sure your repo is pushed to GitHub (the model `.pkl` files must be committed — they are, by design).
+
+### 2. Import on Vercel
+
+1. Go to [vercel.com](https://vercel.com) → **Add New Project** → import your GitHub repo.
+2. Vercel auto-detects `vercel.json` — no build settings to change.
+3. Click **Deploy**.
+
+### 3. That's it
+
+Vercel will install dependencies, bundle the Flask app and the trained models, and give you a live URL like `https://phishguard-ai.vercel.app`.
+
+### Local production preview (optional)
+
+```bash
+pip install vercel   # or: npm i -g vercel
+vercel dev           # mirrors the serverless environment locally
 ```
 
 ---
