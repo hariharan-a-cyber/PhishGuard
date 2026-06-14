@@ -1,4 +1,4 @@
-# 🛡️ PhishGuard AI
+# PhishGuard AI
 
 **An AI/ML-based phishing-detection system** that analyses an email's text,
 sender and URLs and returns a calibrated risk verdict in real time — served
@@ -14,7 +14,7 @@ has been rebuilt.
 
 ---
 
-## ✨ Highlights
+## Highlights
 
 - **27-feature engineered pipeline** covering URLs (IP literals, shorteners,
   punycode, suspicious TLDs, look-alike/digit-substituted domains, subdomain
@@ -39,7 +39,7 @@ has been rebuilt.
 
 ---
 
-## 📊 Model performance
+## Model performance
 
 Numbers below are from the bundled run (`--rows 8000`, 80/20 split, 1,600 held-out test emails):
 
@@ -66,7 +66,7 @@ learns the structural signals instead of over-fitting to "URGENT!!!".
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 phishguard-ai/
@@ -102,7 +102,7 @@ and an alert if phishing)`.
 
 ---
 
-## 🚀 Setup & run
+## Setup & run
 
 ### 1. Prerequisites
 - Python **3.11+** (tested on 3.12)
@@ -120,6 +120,14 @@ pip install -r requirements.txt
 
 The repo already ships a trained model, so you can skip straight to step 4.
 To rebuild everything from scratch:
+
+If the dashboard reports `engine: heuristic` or `/api/health` shows
+`"ml_active": false` on your machine, retrain locally so the bundled model
+files match your installed scikit-learn version:
+
+```bash
+python train_models.py
+```
 
 ```bash
 python data/generate_dataset.py --rows 8000     # writes data/phishing_emails.csv
@@ -139,7 +147,7 @@ WSGI server: uncomment `gunicorn` in `requirements.txt`, then
 
 ---
 
-## 🧠 Training options
+## Training options
 
 `train_models.py` can train from three sources (it always falls back to
 synthetic data if a source is missing or malformed):
@@ -161,7 +169,7 @@ order, and per-feature importances.
 
 ---
 
-## 🔌 REST API
+## REST API
 
 All endpoints return JSON. Base URL `http://localhost:5000`.
 
@@ -214,7 +222,7 @@ model is loaded, or `"heuristic"` when running on the fallback.
 
 ---
 
-## 🧪 Tests
+## Tests
 
 ```bash
 python tests/test_system.py          # or: python -m pytest -q
@@ -232,7 +240,7 @@ print(f'{ok}/{len(EVAL)} correct')"
 
 ---
 
-## 🔍 What was fixed from the original hackathon build
+## What was fixed from the original hackathon build
 
 The recovered project had the right ideas but did not actually work. Key fixes:
 
@@ -254,12 +262,12 @@ The recovered project had the right ideas but did not actually work. Key fixes:
 
 ---
 
-## 👥 Credits
+## Credits
 
 Originally created as a hackathon project led by **me, leading a team of 4
 members**, during my first year. Rebuilt and modernised into the system in
 this repository.
 
-## 📄 License
+## License
 
 Released under the [MIT License](LICENSE).
