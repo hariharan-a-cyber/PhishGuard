@@ -189,12 +189,14 @@
     box-shadow:0 0 8px var(--green);animation:pulse 2.4s infinite}
 
   table{width:100%;border-collapse:collapse;font-size:13px}
-  .tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .tablewrap{overflow-x:auto;overflow-y:auto;max-height:340px;-webkit-overflow-scrolling:touch}
   .tablewrap table{min-width:520px}
   .cards-m{display:none}   /* desktop: hidden, table is used instead */
   th{text-align:left;font-family:var(--mono);font-size:11px;letter-spacing:.08em;
-    text-transform:uppercase;color:var(--faint);padding:10px 12px;border-bottom:1px solid var(--line)}
+    text-transform:uppercase;color:var(--faint);padding:10px 12px;border-bottom:1px solid var(--line);
+    position:sticky;top:0;background:var(--panel);z-index:1}
   td{padding:12px;border-bottom:1px solid var(--line);color:var(--text)}
+  #alertsList{max-height:340px;overflow-y:auto}
   tbody tr{transition:background .2s}
   tbody tr:hover td{background:rgba(34,211,238,.05)}
   tbody tr.flash td{animation:flashrow 1.4s var(--ease)}
@@ -234,7 +236,7 @@
 
     /* scan history becomes a compact card list on mobile (desktop unchanged) */
     .tablewrap{display:none}
-    .cards-m{display:flex;flex-direction:column;gap:10px}
+    .cards-m{display:flex;flex-direction:column;gap:10px;max-height:340px;overflow-y:auto}
     .rcard{background:var(--panel-2);border:1px solid var(--line);border-radius:12px;
       padding:12px 13px;transition:background .2s}
     .rcard.flash{animation:flashrow 1.4s var(--ease)}

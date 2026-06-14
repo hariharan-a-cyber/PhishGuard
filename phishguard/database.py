@@ -2,28 +2,26 @@
 PhishGuard AI - Database layer
 ==============================
 
-A thin wrapper over Python's built-in sqlite3. It keeps the same logical
-tables the original project defined (reports, alerts, blacklist) but removes
-the Flask-SQLAlchemy/SQLAlchemy dependency, so the app installs and runs with
-far fewer moving parts.
+Auto-selects backend:
+  PostgreSQL  when POSTGRES_URL or DATABASE_URL env var is set  (Vercel / production)
+  SQLite      otherwise                                          (local development)
 """
-
 from __future__ import annotations
 
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
-DB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "instance")
-# On Vercel the deployment filesystem is read-only; only /tmp is writable.
-# The PHISHGUARD_DB env var overrides this for any deployment target.
-if os.environ.get("PHISHGUARD_DB"):
-    DB_PATH = os.environ["PHISHGUARD_DB"]
-elif os.environ.get("VERCEL"):
-    DB_PATH = "/tmp/phishguard.db"
-else:
-    DB_PATH = os.path.join(DB_DIR, "phishguard.db")
+_PG_DSN = os.environ.get("POSTGRES_URL") or os.environ.get("DATABASE_URL")
+
+_DB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "instance")
+_SQLITE_PATH = (
+    os.environ.get("PHISHGUARD_DB")
+    or ("/tmp/phishguard.db" if os.environ.get("VERCEL") else "")
+    or os.path.join(_DB_DIR, "phishguard.db")
+)
 
 
 def _now() -> str:
@@ -31,194 +29,222 @@ def _now() -> str:
 
 
 class Database:
-    def __init__(self, path: str = DB_PATH):
-        self.path = path
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    def __init__(self, path: str = _SQLITE_PATH):
+        self._pg = bool(_PG_DSN)
+        if not self._pg:
+            self._path = path
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self.init_db()
 
-    def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    # ------------------------------------------------------------------ #
+    # Connection
+    # ------------------------------------------------------------------ #
+    @contextmanager
+    def _conn(self):
+        if self._pg:
+            import psycopg2
+            conn = psycopg2.connect(_PG_DSN)
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+        else:
+            conn = sqlite3.connect(self._path)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
 
+    def _cur(self, conn):
+        """Cursor with dict-like row access for either backend."""
+        if self._pg:
+            import psycopg2.extras
+            return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        return conn.cursor()
+
+    def _q(self, sql: str) -> str:
+        """Convert SQLite ? placeholders to %s for PostgreSQL."""
+        return sql.replace("?", "%s") if self._pg else sql
+
+    # ------------------------------------------------------------------ #
+    # Schema
+    # ------------------------------------------------------------------ #
     def init_db(self) -> None:
-        with self._conn() as c:
-            c.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS phishing_reports (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    email_subject TEXT,
-                    sender_email TEXT,
-                    message_content TEXT,
-                    urls TEXT,
-                    classification TEXT,
-                    confidence_score REAL,
-                    engine TEXT,
-                    detected_features TEXT,
-                    reasons TEXT,
-                    timestamp TEXT,
-                    user_feedback TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS user_alerts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    alert_type TEXT,
-                    message TEXT,
-                    severity TEXT,
-                    report_id INTEGER,
-                    is_read INTEGER DEFAULT 0,
-                    created_at TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS url_blacklist (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    url TEXT UNIQUE,
-                    threat_level TEXT,
-                    added_date TEXT
-                );
-                """
-            )
+        if self._pg:
+            pk = "SERIAL PRIMARY KEY"
+            stmts = [
+                f"""CREATE TABLE IF NOT EXISTS phishing_reports (
+                    id {pk}, email_subject TEXT, sender_email TEXT,
+                    message_content TEXT, urls TEXT, classification TEXT,
+                    confidence_score REAL, engine TEXT, detected_features TEXT,
+                    reasons TEXT, timestamp TEXT, user_feedback TEXT)""",
+                f"""CREATE TABLE IF NOT EXISTS user_alerts (
+                    id {pk}, alert_type TEXT, message TEXT, severity TEXT,
+                    report_id INTEGER, is_read INTEGER DEFAULT 0, created_at TEXT)""",
+                f"""CREATE TABLE IF NOT EXISTS url_blacklist (
+                    id {pk}, url TEXT UNIQUE, threat_level TEXT, added_date TEXT)""",
+            ]
+            with self._conn() as conn:
+                cur = conn.cursor()
+                for s in stmts:
+                    cur.execute(s)
+        else:
+            with self._conn() as conn:
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS phishing_reports (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        email_subject TEXT, sender_email TEXT,
+                        message_content TEXT, urls TEXT, classification TEXT,
+                        confidence_score REAL, engine TEXT, detected_features TEXT,
+                        reasons TEXT, timestamp TEXT, user_feedback TEXT
+                    );
+                    CREATE TABLE IF NOT EXISTS user_alerts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        alert_type TEXT, message TEXT, severity TEXT,
+                        report_id INTEGER, is_read INTEGER DEFAULT 0, created_at TEXT
+                    );
+                    CREATE TABLE IF NOT EXISTS url_blacklist (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        url TEXT UNIQUE, threat_level TEXT, added_date TEXT
+                    );
+                """)
 
     # ------------------------------------------------------------------ #
     # Reports
     # ------------------------------------------------------------------ #
     def add_report(self, email: dict, result: dict) -> int:
-        with self._conn() as c:
-            cur = c.execute(
-                """INSERT INTO phishing_reports
-                   (email_subject, sender_email, message_content, urls,
-                    classification, confidence_score, engine,
-                    detected_features, reasons, timestamp)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    email.get("subject", ""),
-                    email.get("sender", ""),
-                    email.get("content", ""),
-                    json.dumps(email.get("urls", [])),
-                    result["classification"],
-                    round(float(result["confidence_score"]), 4),
-                    result.get("engine", "unknown"),
-                    json.dumps(result.get("features", {})),
-                    json.dumps(result.get("reasons", [])),
-                    _now(),
-                ),
-            )
-            report_id = cur.lastrowid
+        params = (
+            email.get("subject", ""), email.get("sender", ""),
+            email.get("content", ""), json.dumps(email.get("urls", [])),
+            result["classification"], round(float(result["confidence_score"]), 4),
+            result.get("engine", "unknown"),
+            json.dumps(result.get("features", {})),
+            json.dumps(result.get("reasons", [])), _now(),
+        )
+        insert_report = """INSERT INTO phishing_reports
+            (email_subject, sender_email, message_content, urls,
+             classification, confidence_score, engine,
+             detected_features, reasons, timestamp)
+            VALUES (?,?,?,?,?,?,?,?,?,?)"""
+
+        with self._conn() as conn:
+            cur = self._cur(conn)
+            if self._pg:
+                cur.execute(self._q(insert_report) + " RETURNING id", params)
+                report_id = cur.fetchone()["id"]
+            else:
+                cur.execute(insert_report, params)
+                report_id = cur.lastrowid
 
             if result["classification"] == "phishing":
-                c.execute(
-                    """INSERT INTO user_alerts
-                       (alert_type, message, severity, report_id, created_at)
-                       VALUES (?,?,?,?,?)""",
-                    (
-                        "Phishing Detected",
-                        f"Potential phishing email from "
-                        f"{email.get('sender', 'unknown sender')}",
-                        "high" if result["confidence_score"] >= 0.8 else "medium",
-                        report_id,
-                        _now(),
-                    ),
+                alert_params = (
+                    "Phishing Detected",
+                    f"Potential phishing email from {email.get('sender', 'unknown sender')}",
+                    "high" if result["confidence_score"] >= 0.8 else "medium",
+                    report_id, _now(),
                 )
-            return report_id
+                insert_alert = """INSERT INTO user_alerts
+                    (alert_type, message, severity, report_id, created_at)
+                    VALUES (?,?,?,?,?)"""
+                self._cur(conn).execute(self._q(insert_alert), alert_params)
+        return report_id
 
     def get_reports(self, page: int = 1, per_page: int = 20) -> dict:
         offset = (page - 1) * per_page
-        with self._conn() as c:
-            total = c.execute(
-                "SELECT COUNT(*) AS n FROM phishing_reports").fetchone()["n"]
-            rows = c.execute(
-                """SELECT * FROM phishing_reports
-                   ORDER BY id DESC LIMIT ? OFFSET ?""",
-                (per_page, offset),
-            ).fetchall()
+        with self._conn() as conn:
+            cur = self._cur(conn)
+            cur.execute("SELECT COUNT(*) AS n FROM phishing_reports")
+            total = cur.fetchone()["n"]
+            cur.execute(
+                self._q("SELECT * FROM phishing_reports ORDER BY id DESC LIMIT ? OFFSET ?"),
+                (per_page, offset))
+            rows = [dict(r) for r in cur.fetchall()]
         reports = [
-            {
-                "id": r["id"],
-                "sender_email": r["sender_email"],
-                "subject": r["email_subject"],
-                "classification": r["classification"],
-                "confidence_score": round(r["confidence_score"], 4),
-                "engine": r["engine"],
-                "timestamp": r["timestamp"],
-            }
+            {"id": r["id"], "sender_email": r["sender_email"],
+             "subject": r["email_subject"], "classification": r["classification"],
+             "confidence_score": round(r["confidence_score"], 4),
+             "engine": r["engine"], "timestamp": r["timestamp"]}
             for r in rows
         ]
         pages = max(1, (total + per_page - 1) // per_page)
-        return {"total": total, "pages": pages,
-                "current_page": page, "reports": reports}
+        return {"total": total, "pages": pages, "current_page": page, "reports": reports}
 
     def set_feedback(self, report_id: int, feedback: str) -> bool:
-        with self._conn() as c:
-            cur = c.execute(
-                "UPDATE phishing_reports SET user_feedback=? WHERE id=?",
-                (feedback, report_id),
-            )
+        with self._conn() as conn:
+            cur = self._cur(conn)
+            cur.execute(
+                self._q("UPDATE phishing_reports SET user_feedback=? WHERE id=?"),
+                (feedback, report_id))
             return cur.rowcount > 0
 
     # ------------------------------------------------------------------ #
     # Alerts
     # ------------------------------------------------------------------ #
     def get_alerts(self, limit: int = 50) -> list[dict]:
-        with self._conn() as c:
-            rows = c.execute(
-                """SELECT * FROM user_alerts WHERE is_read=0
-                   ORDER BY id DESC LIMIT ?""",
-                (limit,),
-            ).fetchall()
-        return [
-            {
-                "id": r["id"],
-                "type": r["alert_type"],
-                "message": r["message"],
-                "severity": r["severity"],
-                "created_at": r["created_at"],
-            }
-            for r in rows
-        ]
+        with self._conn() as conn:
+            cur = self._cur(conn)
+            cur.execute(
+                self._q("SELECT * FROM user_alerts WHERE is_read=0 ORDER BY id DESC LIMIT ?"),
+                (limit,))
+            rows = [dict(r) for r in cur.fetchall()]
+        return [{"id": r["id"], "type": r["alert_type"], "message": r["message"],
+                 "severity": r["severity"], "created_at": r["created_at"]}
+                for r in rows]
 
     def mark_alerts_read(self) -> int:
-        with self._conn() as c:
-            cur = c.execute("UPDATE user_alerts SET is_read=1 WHERE is_read=0")
+        with self._conn() as conn:
+            cur = self._cur(conn)
+            cur.execute("UPDATE user_alerts SET is_read=1 WHERE is_read=0")
             return cur.rowcount
 
     # ------------------------------------------------------------------ #
     # Blacklist
     # ------------------------------------------------------------------ #
     def add_blacklist(self, url: str, threat_level: str = "high") -> None:
-        with self._conn() as c:
-            c.execute(
-                """INSERT OR IGNORE INTO url_blacklist
-                   (url, threat_level, added_date) VALUES (?,?,?)""",
-                (url, threat_level, _now()),
-            )
+        with self._conn() as conn:
+            if self._pg:
+                conn.cursor().execute(
+                    "INSERT INTO url_blacklist (url, threat_level, added_date) "
+                    "VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+                    (url, threat_level, _now()))
+            else:
+                conn.execute(
+                    "INSERT OR IGNORE INTO url_blacklist "
+                    "(url, threat_level, added_date) VALUES (?,?,?)",
+                    (url, threat_level, _now()))
 
     def is_blacklisted(self, url: str) -> bool:
-        with self._conn() as c:
-            row = c.execute(
-                "SELECT 1 FROM url_blacklist WHERE url=?", (url,)).fetchone()
-        return row is not None
+        with self._conn() as conn:
+            cur = self._cur(conn)
+            cur.execute(self._q("SELECT 1 FROM url_blacklist WHERE url=?"), (url,))
+            return cur.fetchone() is not None
 
     # ------------------------------------------------------------------ #
     # Statistics
     # ------------------------------------------------------------------ #
     def statistics(self) -> dict:
-        # Counts are banded by confidence to match the UI's three-tier verdict:
-        #   high (>=0.65) phishing · medium (0.45-0.65) suspicious · low legitimate
-        with self._conn() as c:
-            total = c.execute(
-                "SELECT COUNT(*) AS n FROM phishing_reports").fetchone()["n"]
-            phishing = c.execute(
-                "SELECT COUNT(*) AS n FROM phishing_reports "
-                "WHERE confidence_score >= 0.65").fetchone()["n"]
-            suspicious = c.execute(
-                "SELECT COUNT(*) AS n FROM phishing_reports "
-                "WHERE confidence_score >= 0.45 AND confidence_score < 0.65").fetchone()["n"]
-            correct = c.execute(
-                "SELECT COUNT(*) AS n FROM phishing_reports "
-                "WHERE user_feedback='correct'").fetchone()["n"]
-            graded = c.execute(
-                "SELECT COUNT(*) AS n FROM phishing_reports "
-                "WHERE user_feedback IS NOT NULL").fetchone()["n"]
+        with self._conn() as conn:
+            cur = self._cur(conn)
+
+            def n(sql: str) -> int:
+                cur.execute(sql)
+                return cur.fetchone()["n"]
+
+            total      = n("SELECT COUNT(*) AS n FROM phishing_reports")
+            phishing   = n("SELECT COUNT(*) AS n FROM phishing_reports WHERE confidence_score >= 0.65")
+            suspicious = n("SELECT COUNT(*) AS n FROM phishing_reports WHERE confidence_score >= 0.45 AND confidence_score < 0.65")
+            correct    = n("SELECT COUNT(*) AS n FROM phishing_reports WHERE user_feedback='correct'")
+            graded     = n("SELECT COUNT(*) AS n FROM phishing_reports WHERE user_feedback IS NOT NULL")
+
         legitimate = total - phishing - suspicious
         accuracy = (correct / graded * 100) if graded else 0.0
         return {
