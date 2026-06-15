@@ -4,6 +4,8 @@
 sender and URLs and returns a calibrated risk verdict in real time — served
 through a clean security-console web dashboard and a JSON REST API.
 
+###  **[▶ Live demo — phishguardtech.vercel.app](https://phishguardtech.vercel.app)**
+
 PhishGuard AI was originally built as a **first-year hackathon project under my
 leadership of a 4-member team**. This repository is a full rebuild and
 modernisation of that project: the original core idea (an ensemble ML model
@@ -145,6 +147,12 @@ Set a custom port with `PORT=8080 python app.py`. For production you can use a
 WSGI server: uncomment `gunicorn` in `requirements.txt`, then
 `gunicorn app:app`.
 
+> **Database:** there's nothing to initialise by hand — on first run the app
+> auto-creates `instance/phishguard.db` and all tables. To store it elsewhere
+> (e.g. a writable/persistent disk on a host), set the `PHISHGUARD_DB`
+> environment variable to an absolute path before launching:
+> `export PHISHGUARD_DB=/var/data/phishguard.db`.
+
 ---
 
 ## Training options
@@ -171,7 +179,8 @@ order, and per-feature importances.
 
 ## REST API
 
-All endpoints return JSON. Base URL `http://localhost:5000`.
+All endpoints return JSON. Base URL `http://localhost:5000`
+(or the live demo at `https://phishguardtech.vercel.app`).
 
 | Method | Endpoint             | Purpose                                   |
 | ------ | -------------------- | ----------------------------------------- |
@@ -187,7 +196,7 @@ All endpoints return JSON. Base URL `http://localhost:5000`.
 **Analyse an email:**
 
 ```bash
-curl -s http://localhost:5000/api/analyze \
+curl -s https://phishguardtech.vercel.app/api/analyze \
   -H "Content-Type: application/json" \
   -d '{
         "sender": "micros0ft.account@secure-verify.xyz",
@@ -242,7 +251,9 @@ print(f'{ok}/{len(EVAL)} correct')"
 
 ## Deploy to Vercel
 
-PhishGuard AI can be deployed as a serverless Flask app on Vercel in a few steps.
+PhishGuard AI runs as a serverless Flask app on Vercel — the live demo at
+**[phishguardtech.vercel.app](https://phishguardtech.vercel.app)** is deployed
+exactly this way.
 
 > **Note on persistence:** Vercel's serverless filesystem is ephemeral — scan history and alerts reset on cold starts. The ML analysis engine works fully; only the SQLite history doesn't persist. For permanent history, set the `PHISHGUARD_DB` environment variable to a writable path or swap the database layer for a hosted service (e.g. Vercel Postgres).
 
@@ -258,7 +269,7 @@ Make sure your repo is pushed to GitHub (the model `.pkl` files must be committe
 
 ### 3. That's it
 
-Vercel will install dependencies, bundle the Flask app and the trained models, and give you a live URL like `https://phishguard-ai.vercel.app`.
+Vercel will install dependencies, bundle the Flask app and the trained models, and give you a live URL like `https://phishguardtech.vercel.app`.
 
 ### Local production preview (optional)
 
