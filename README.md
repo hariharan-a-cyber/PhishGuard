@@ -6,6 +6,8 @@ through a clean security-console web dashboard and a JSON REST API.
 
 ###  **[Live demo — PhishGuard AI](https://phishguardtech.vercel.app)**
 
+> **First load may take 30–60 seconds.** The app runs on Vercel's free-tier serverless functions — when idle, the Python runtime and ML models are unloaded. The first request wakes ("cold-starts") the function and reloads everything. Subsequent requests are fast.
+
 PhishGuard AI was originally built as a **first-year hackathon project under my
 leadership of a 4-member team**. This repository is a full rebuild and
 modernisation of that project: the original core idea (an ensemble ML model
