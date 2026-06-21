@@ -4,7 +4,11 @@
 sender and URLs and returns a calibrated risk verdict in real time — served
 through a clean security-console web dashboard and a JSON REST API.
 
-###  **[Live demo — PhishGuard AI](https://phishguardtech.vercel.app)**
+###  **[Live demo — phishguardtech.vercel.app](https://phishguardtech.vercel.app)**
+
+<p align="center">
+  <img src="assets/demo.gif" alt="PhishGuard AI demo" width="800">
+</p>
 
 > **First load may take 30–60 seconds.** The app runs on Vercel's free-tier serverless functions — when idle, the Python runtime and ML models are unloaded. The first request wakes ("cold-starts") the function and reloads everything. Subsequent requests are fast.
 
