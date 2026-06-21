@@ -62,7 +62,8 @@ def analyze_email():
         }
 
         result = detector.predict(email)
-        report_id = db.add_report(email, result)
+        device_id = str(data.get("device_id", ""))[:128]
+        report_id = db.add_report(email, result, device_id)
 
         return jsonify({
             "report_id": report_id,
@@ -96,12 +97,14 @@ def feedback():
 def get_reports():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
-    return jsonify(db.get_reports(page, per_page))
+    device_id = request.args.get("device_id", "")[:128]
+    return jsonify(db.get_reports(page, per_page, device_id))
 
 
 @app.route("/api/alerts")
 def get_alerts():
-    return jsonify({"alerts": db.get_alerts()})
+    device_id = request.args.get("device_id", "")[:128]
+    return jsonify({"alerts": db.get_alerts(device_id=device_id)})
 
 
 @app.route("/api/alerts/read", methods=["POST"])
